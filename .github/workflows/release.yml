@@ -101,7 +101,11 @@ jobs:
           key: cargo-apk-${{ runner.os }}
       - name: Install cargo-apk
         if: steps.cache-cargo-apk.outputs.cache-hit != 'true'
-        run: cargo install cargo-apk --locked
+        # Explicit --root so the binary lands at a known path regardless of
+        # how the runner image configures CARGO_HOME/CARGO_INSTALL_ROOT.
+        run: |
+          cargo install cargo-apk --locked --root "$HOME/.cargo"
+          ls -la "$HOME/.cargo/bin/cargo-apk"
       - name: Generate signing keystore
         # CI signs with a freshly generated debug keystore. The keystore path
         # in Cargo.toml points at the dev machine, so repoint it here.
@@ -123,13 +127,16 @@ jobs:
             export NDK_HOME="$ANDROID_NDK_ROOT"
             unset ANDROID_SDK_ROOT ANDROID_NDK_PATH
             echo "ANDROID_HOME=$ANDROID_HOME"
-            ls "$ANDROID_HOME/ndk/" "$ANDROID_HOME/build-tools/" "$ANDROID_HOME/platforms/"
-            command -v cargo-apk && cargo apk version
+            ls "$ANDROID_HOME/ndk/"
+            # Invoke by absolute path — PATH differences between steps have
+            # bitten before ("install succeeded", binary not found later).
+            CARGO_APK="$HOME/.cargo/bin/cargo-apk"
+            "$CARGO_APK" apk version
             GAME='${{ needs.meta.outputs.game }}'
             V='${{ needs.meta.outputs.version }}'
-            cargo apk build --release --lib --target aarch64-linux-android
+            "$CARGO_APK" apk build --release --lib --target aarch64-linux-android
             mv "target/release/apk/$GAME.apk" "$GAME-android-arm64-v$V.apk"
-            cargo apk build --release --lib --target x86_64-linux-android
+            "$CARGO_APK" apk build --release --lib --target x86_64-linux-android
             mv "target/release/apk/$GAME.apk" "$GAME-android-x86_64-v$V.apk"
           } 2>&1 | tee apk-build.log
       - name: Surface failure log as annotations
@@ -137,8 +144,9 @@ jobs:
         # ::error:: annotations are publicly readable — echo the tail of the
         # build log so failures are diagnosable from outside.
         if: failure()
+        # GitHub caps annotations at 10 per step — keep the tail tight.
         run: |
-          tail -n 15 apk-build.log 2>/dev/null | while IFS= read -r l; do echo "::error::${l}"; done
+          tail -n 9 apk-build.log 2>/dev/null | while IFS= read -r l; do echo "::error::${l}"; done
       - uses: actions/upload-artifact@v4
         with:
           name: android
