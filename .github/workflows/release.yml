@@ -101,7 +101,7 @@ jobs:
           key: cargo-apk-${{ runner.os }}
       - name: Install cargo-apk
         if: steps.cache-cargo-apk.outputs.cache-hit != 'true'
-        run: cargo install cargo-apk
+        run: cargo install cargo-apk --locked
       - name: Generate signing keystore
         # CI signs with a freshly generated debug keystore. The keystore path
         # in Cargo.toml points at the dev machine, so repoint it here.
@@ -114,13 +114,31 @@ jobs:
           sed -i "s|^path = \".*debug.keystore\"|path = \"$HOME/.android/debug.keystore\"|" Cargo.toml
       - name: Build APKs
         run: |
-          export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/26.1.10909125"
-          GAME='${{ needs.meta.outputs.game }}'
-          V='${{ needs.meta.outputs.version }}'
-          cargo apk build --release --lib --target aarch64-linux-android
-          mv "target/release/apk/$GAME.apk" "$GAME-android-arm64-v$V.apk"
-          cargo apk build --release --lib --target x86_64-linux-android
-          mv "target/release/apk/$GAME.apk" "$GAME-android-x86_64-v$V.apk"
+          set -o pipefail
+          {
+            # Point every NDK env var cargo-apk consults at our pinned NDK,
+            # overriding whatever NDK the runner image presets.
+            export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/26.1.10909125"
+            export ANDROID_NDK_HOME="$ANDROID_NDK_ROOT"
+            export NDK_HOME="$ANDROID_NDK_ROOT"
+            unset ANDROID_SDK_ROOT ANDROID_NDK_PATH
+            echo "ANDROID_HOME=$ANDROID_HOME"
+            ls "$ANDROID_HOME/ndk/" "$ANDROID_HOME/build-tools/" "$ANDROID_HOME/platforms/"
+            command -v cargo-apk && cargo apk version
+            GAME='${{ needs.meta.outputs.game }}'
+            V='${{ needs.meta.outputs.version }}'
+            cargo apk build --release --lib --target aarch64-linux-android
+            mv "target/release/apk/$GAME.apk" "$GAME-android-arm64-v$V.apk"
+            cargo apk build --release --lib --target x86_64-linux-android
+            mv "target/release/apk/$GAME.apk" "$GAME-android-x86_64-v$V.apk"
+          } 2>&1 | tee apk-build.log
+      - name: Surface failure log as annotations
+        # Job logs of this repo need admin auth to download via API, but
+        # ::error:: annotations are publicly readable — echo the tail of the
+        # build log so failures are diagnosable from outside.
+        if: failure()
+        run: |
+          tail -n 15 apk-build.log 2>/dev/null | while IFS= read -r l; do echo "::error::${l}"; done
       - uses: actions/upload-artifact@v4
         with:
           name: android

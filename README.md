@@ -55,6 +55,20 @@ Key load-bearing details (easy to lose, hard to rediscover):
 | `deploy_apk_to_emulator.sh` | Re-install Path B APK without rebuilding |
 | `read_logs.sh` / `read_logs_phone.sh` | Dump last 50 relevant log lines (emulator / phone) |
 | `kill_phone_app.sh` | Force-stop the game on the phone |
+| `increment_version.sh [major\|minor\|patch]` | Bump `version.txt` (default: patch) and sync the version into `Cargo.toml` and `app/build.gradle` |
+
+## Versioning + CI releases
+
+`version.txt` at the repo root is the single source of truth for the game version.
+
+1. `./increment_version.sh` (or `minor` / `major`) bumps it and syncs `Cargo.toml` + Gradle `versionName`/`versionCode`.
+2. Commit and push to `main`.
+3. `.github/workflows/release.yml` builds all three platforms on GitHub Actions and publishes a **GitHub Release tagged `v<version>`** with:
+   - `<game>-linux-x86_64-v<version>.tar.gz` (binary + assets)
+   - `<game>-windows-x86_64-v<version>.zip` (exe + assets, MinGW cross-compiled)
+   - `<game>-android-arm64-v<version>.apk` (phones) and `<game>-android-x86_64-v<version>.apk` (emulator)
+
+Pushing again without bumping the version updates the existing release for that tag rather than creating a new one. CI signs APKs with a freshly generated debug keystore — replace that step with a real keystore (repo secret) before shipping to a store.
 
 ## Quick start
 
