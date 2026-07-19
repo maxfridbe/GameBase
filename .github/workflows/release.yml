@@ -119,8 +119,12 @@ jobs:
           path: dist
 
   # Publishes the web build as a live demo at https://<user>.github.io/<repo>/
+  # ONE-TIME SETUP: a repo admin must enable Pages first (Settings -> Pages ->
+  # Source: "GitHub Actions") — the workflow token is not allowed to do it.
+  # Until then this job fails harmlessly (continue-on-error keeps runs green).
   pages:
     needs: web
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       pages: write
