@@ -9,6 +9,7 @@ edition = "2024"
 #   android-native-activity -> required for the cargo-apk Android path
 #   x11                     -> required for native Linux windowing
 #   multi_threaded          -> desktop performance (ignored on wasm)
+#   webgl2                  -> required for the browser/WASM build
 bevy = { version = "0.15.2", default-features = false, features = [
     "android-native-activity",
     "bevy_asset",
@@ -31,6 +32,7 @@ bevy = { version = "0.15.2", default-features = false, features = [
     "png",
     "smaa_luts",
     "tonemapping_luts",
+    "webgl2",
     "x11"
 ] }
 # Embeds the assets/ folder into the binary/APK so no runtime file IO is
@@ -39,6 +41,13 @@ bevy_embedded_assets = "0.12"
 # Pulled in explicitly so the "oboe-shared-stdcxx" feature is enabled for
 # Bevy's audio backend on Android (links against libc++_shared.so).
 cpal = { version = "0.15", features = ["oboe-shared-stdcxx"] }
+
+# Browser build: ahash (via bevy) pulls getrandom 0.3, which refuses to
+# compile for wasm32-unknown-unknown unless the JS backend is enabled —
+# this feature plus RUSTFLAGS --cfg getrandom_backend="wasm_js" (set by
+# build_web.sh and the CI web job).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 # The library build is what Android consumes (cdylib for cargo-apk /
 # NativeActivity, staticlib for other embedding scenarios). The rlib lets

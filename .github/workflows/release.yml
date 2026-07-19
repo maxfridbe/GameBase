@@ -80,6 +80,62 @@ jobs:
           name: windows
           path: "*.zip"
 
+  web:
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        env:
+          RUSTFLAGS: --cfg getrandom_backend="wasm_js"
+        run: cargo build --release --target wasm32-unknown-unknown
+      - name: Install wasm-bindgen-cli (prebuilt, version-matched to Cargo.lock)
+        run: |
+          WBV=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | grep '^version' | cut -d'"' -f2)
+          echo "wasm-bindgen crate version: $WBV"
+          curl -sL "https://github.com/rustwasm/wasm-bindgen/releases/download/$WBV/wasm-bindgen-$WBV-x86_64-unknown-linux-musl.tar.gz" | tar xz
+          sudo mv "wasm-bindgen-$WBV-x86_64-unknown-linux-musl/wasm-bindgen" /usr/local/bin/
+          wasm-bindgen --version
+      - name: Package
+        run: |
+          GAME='${{ needs.meta.outputs.game }}'
+          V='${{ needs.meta.outputs.version }}'
+          mkdir -p dist
+          wasm-bindgen --no-typescript --target web \
+            --out-dir dist --out-name "$GAME" \
+            "target/wasm32-unknown-unknown/release/$GAME.wasm"
+          sed "s/{{GAME_NAME}}/$GAME/g" web/index.html > dist/index.html
+          (cd dist && zip -r "../$GAME-web-v$V.zip" .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: "*.zip"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  # Publishes the web build as a live demo at https://<user>.github.io/<repo>/
+  pages:
+    needs: web
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Enable GitHub Pages (first run only)
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
   android:
     needs: meta
     runs-on: ubuntu-latest
@@ -154,7 +210,7 @@ jobs:
           path: "*.apk"
 
   release:
-    needs: [meta, linux, windows, android]
+    needs: [meta, linux, windows, android, web]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

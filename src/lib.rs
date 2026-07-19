@@ -44,6 +44,10 @@ pub fn run_game() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Game Base".into(),
+                // Browser build: render into the canvas provided by
+                // web/index.html and track its CSS size. Ignored on native.
+                canvas: Some("#game-canvas".into()),
+                fit_canvas_to_parent: true,
                 ..default()
             }),
             ..default()

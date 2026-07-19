@@ -61,7 +61,15 @@ else
     bad "rust target x86_64-pc-windows-gnu"
 fi
 
-echo "=== 4. Android APK builds (build_cargo_apk*.sh / buildanddeploy.sh) ==="
+echo "=== 4. Browser/WASM build (build_web.sh) ==="
+if have rustup && rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then
+    ok "rust target wasm32-unknown-unknown"
+else
+    bad "rust target wasm32-unknown-unknown"
+fi
+have wasm-bindgen && ok "wasm-bindgen-cli" || bad "wasm-bindgen-cli (build_web.sh auto-installs the version matching Cargo.lock)"
+
+echo "=== 5. Android APK builds (build_cargo_apk*.sh / buildanddeploy.sh) ==="
 for t in aarch64-linux-android x86_64-linux-android; do
     if have rustup && rustup target list --installed 2>/dev/null | grep -q "$t"; then
         ok "rust target $t"
@@ -122,10 +130,13 @@ fi
 
 echo "Adding cross-compile targets to Rust..."
 rustup target add x86_64-pc-windows-gnu
+rustup target add wasm32-unknown-unknown
 rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
 
 have cargo-apk || cargo install cargo-apk
 have cargo-ndk || cargo install cargo-ndk
+# build_web.sh re-installs the exact version matching Cargo.lock if needed
+have wasm-bindgen || cargo install wasm-bindgen-cli
 
 # Android SDK/NDK Setup
 if [ ! -d "$ANDROID_HOME/ndk/$NDK_VERSION" ] || [ ! -x "$ANDROID_HOME/platform-tools/adb" ]; then

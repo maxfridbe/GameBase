@@ -1,6 +1,8 @@
 # GameBase
 
-A minimal Bevy (Rust) starter game that already ships to **Linux**, **Windows**, and **Android (APK)** from a single Linux dev machine. The build methodology was extracted from the Julian2 train game project.
+A minimal Bevy (Rust) starter game that already ships to **Linux**, **Windows**, **Android (APK)**, and the **browser (WASM)** from a single Linux dev machine. The build methodology was extracted from the Julian2 train game project.
+
+**[▶ Play the demo in your browser](https://maxfridbe.github.io/GameBase/)** — deployed automatically to GitHub Pages by the release workflow.
 
 The base game is a sphere you drive around a 3D plane:
 
@@ -28,6 +30,7 @@ src/main.rs  -> tiny desktop wrapper: fn main() { game_base::run_game() }
 | Windows | cross-compile from Linux with MinGW (`x86_64-pc-windows-gnu`) | `target/windows_dist/` (exe + assets, zip and ship) |
 | Android A (**primary**) | `cargo apk` builds the **cdylib** into an APK per ABI; NativeActivity, no Java code at all | `target/{debug,release}/apk/*.apk` |
 | Android B (alternative) | `cargo ndk` drops the cdylib into `app/src/main/jniLibs/`, then Gradle wraps it with a Java `GameActivity` into one universal APK | `app/build/outputs/apk/debug/app-debug.apk` |
+| Browser (WASM) | compile the bin to `wasm32-unknown-unknown` (webgl2 feature), `wasm-bindgen` generates the JS glue, `web/index.html` hosts the canvas | `target/web_dist/` (static site — serve anywhere) |
 
 Key load-bearing details (easy to lose, hard to rediscover):
 
@@ -37,6 +40,7 @@ Key load-bearing details (easy to lose, hard to rediscover):
 - Two APKs are built on purpose in Path A: **x86_64** for the desktop emulator, **arm64-v8a** for real phones. Path B builds one fat APK containing both.
 - Emulator GPU emulation matters for wgpu/Vulkan: `swangle_indirect` (run_emulator.sh) is the most stable; `start_new_emulator.sh` is the SwiftShader/CPU fallback for hosts whose GPU driver crashes the emulator.
 - `game.env` centralizes the game identity + Android SDK paths; every script sources it.
+- Browser build details: `bevy_embedded_assets` means the `.wasm` is fully self-contained (no asset fetch issues on static hosts); `wasm-bindgen-cli` must exactly match the `wasm-bindgen` crate version in `Cargo.lock` (`build_web.sh` auto-installs the right one); `getrandom` 0.3 (pulled via ahash/bevy) needs the `wasm_js` feature **and** `RUSTFLAGS=--cfg getrandom_backend="wasm_js"` — both are wired in already; the window is bound to the `#game-canvas` element in `web/index.html`.
 
 ## Scripts
 
@@ -46,6 +50,7 @@ Key load-bearing details (easy to lose, hard to rediscover):
 | `setup_env.sh` | Check, then install only what's missing: system packages (apt or dnf detected automatically), Rust + cross targets, MinGW-w64, cargo-apk/cargo-ndk, Android SDK/NDK 26, debug keystore |
 | `run_linux.sh [debug]` | Build + run natively on Linux |
 | `build_windows.sh` | Cross-compile Windows release, package exe + assets into `target/windows_dist/` |
+| `build_web.sh` | Build the browser version into `target/web_dist/` (compile to wasm, run wasm-bindgen, add `web/index.html`) |
 | `build_cargo_apk.sh` / `_debug.sh` | Path A: build emulator (x86_64) + phone (ARM64) APKs |
 | `deploy_cargo_apk.sh` | Install Path A APK to running emulator, launch, follow logcat |
 | `deploy_phone.sh` | Install Path A ARM64 APK to USB phone, launch, follow logcat |
@@ -67,6 +72,7 @@ Key load-bearing details (easy to lose, hard to rediscover):
    - `<game>-linux-x86_64-v<version>.tar.gz` (binary + assets)
    - `<game>-windows-x86_64-v<version>.zip` (exe + assets, MinGW cross-compiled)
    - `<game>-android-arm64-v<version>.apk` (phones) and `<game>-android-x86_64-v<version>.apk` (emulator)
+   - `<game>-web-v<version>.zip` (static site) — the same build is also deployed to **GitHub Pages** as the live demo (first run: if the `pages` job fails, enable Pages once under repo Settings → Pages → Source: GitHub Actions)
 
 Pushing again without bumping the version updates the existing release for that tag rather than creating a new one. CI signs APKs with a freshly generated debug keystore — replace that step with a real keystore (repo secret) before shipping to a store.
 
@@ -77,6 +83,8 @@ Pushing again without bumping the version updates the existing release for that 
 ./setup_env.sh          # once per machine; installs only the missing pieces (apt or dnf)
 ./run_linux.sh          # play on Linux
 ./build_windows.sh      # produce target/windows_dist/ for Windows
+./build_web.sh          # produce target/web_dist/ for the browser
+python3 -m http.server -d target/web_dist 8080   # ...then play at localhost:8080
 ./run_emulator.sh       # boot the Android emulator...
 ./build_cargo_apk_debug.sh && ./deploy_cargo_apk.sh   # ...and play in it
 ./build_cargo_apk.sh && ./deploy_phone.sh             # play on a USB phone
@@ -114,6 +122,8 @@ GRADLE_PACKAGE="org.yourstudio.my_game"   # = app/build.gradle applicationId
 
 **3. App icon** — replace `assets/android-res/mipmap-mdpi/ic_launcher.png` (used by both Android paths).
 
+**3b. Demo link** — the browser demo deploys to `https://<your-user>.github.io/<your-repo>/`; update the link at the top of this README. (`web/index.html` needs no changes — `build_web.sh` fills in the game name.)
+
 **4. Only if you use Path B (Gradle):**
 
 - `app/build.gradle` — `namespace` and `applicationId`
@@ -142,4 +152,5 @@ sed -i "s/Game Base/$NEWLABEL/g" Cargo.toml src/lib.rs
 | Android NDK | 26.1.10909125 | referenced by every script + setup |
 | AGP / Gradle | 8.4.0 / 8.6 | Path B only |
 | games-activity | 4.4.0 | must stay compatible with bevy's `android-activity` crate |
+| wasm-bindgen-cli | = `wasm-bindgen` in Cargo.lock | hard requirement; `build_web.sh`/CI resolve it automatically |
 | minSdk / target/compileSdk | 30 / 33 / 34 | Path B only; cargo-apk defaults handle Path A |
