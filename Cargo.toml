@@ -1,0 +1,66 @@
+[package]
+name = "game_base"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Feature list is trimmed to a minimal 3D game but keeps every flag the
+# multi-platform build depends on:
+#   android-native-activity -> required for the cargo-apk Android path
+#   x11                     -> required for native Linux windowing
+#   multi_threaded          -> desktop performance (ignored on wasm)
+bevy = { version = "0.15.2", default-features = false, features = [
+    "android-native-activity",
+    "bevy_asset",
+    "bevy_color",
+    "bevy_core_pipeline",
+    "bevy_gizmos",
+    "bevy_pbr",
+    "bevy_render",
+    "bevy_scene",
+    "bevy_sprite",
+    "bevy_state",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_winit",
+    "bevy_audio",
+    "wav",
+    "default_font",
+    "hdr",
+    "multi_threaded",
+    "png",
+    "smaa_luts",
+    "tonemapping_luts",
+    "x11"
+] }
+# Embeds the assets/ folder into the binary/APK so no runtime file IO is
+# needed on Android (where Bevy's AssetServer cannot read loose files).
+bevy_embedded_assets = "0.12"
+# Pulled in explicitly so the "oboe-shared-stdcxx" feature is enabled for
+# Bevy's audio backend on Android (links against libc++_shared.so).
+cpal = { version = "0.15", features = ["oboe-shared-stdcxx"] }
+
+# The library build is what Android consumes (cdylib for cargo-apk /
+# NativeActivity, staticlib for other embedding scenarios). The rlib lets
+# the desktop binary below reuse the same code.
+[lib]
+name = "game_base"
+path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Desktop entry point (Linux native + Windows cross-compile).
+[[bin]]
+name = "game_base"
+path = "src/main.rs"
+
+# --- cargo-apk configuration (primary Android path) ---
+[package.metadata.android]
+package = "com.gamebase.game"
+label = "Game Base"
+assets = "assets"
+
+[package.metadata.android.signing.release]
+path = "/var/home/maxfridbe/.android/debug.keystore"
+keystore_password = "android"
+key_alias = "androiddebugkey"
+key_password = "android"

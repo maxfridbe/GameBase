@@ -1,0 +1,143 @@
+# Builds Linux, Windows (MinGW cross-compile) and Android (cargo-apk)
+# release artifacts and publishes them as a GitHub Release tagged
+# v<version.txt>. Bump the version with ./increment_version.sh.
+name: Release Builds
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # Read version.txt + game.env once; every other job consumes the outputs.
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      game: ${{ steps.v.outputs.game }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          echo "version=$(cat version.txt)" >> "$GITHUB_OUTPUT"
+          source ./game.env
+          echo "game=$GAME_NAME" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Bevy system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release
+      - name: Package
+        run: |
+          GAME='${{ needs.meta.outputs.game }}'
+          V='${{ needs.meta.outputs.version }}'
+          mkdir -p "dist/$GAME"
+          cp "target/release/$GAME" "dist/$GAME/"
+          cp -r assets "dist/$GAME/"
+          tar -C dist -czf "$GAME-linux-x86_64-v$V.tar.gz" "$GAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: "*.tar.gz"
+
+  windows:
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW-w64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --target x86_64-pc-windows-gnu
+      - name: Package
+        run: |
+          GAME='${{ needs.meta.outputs.game }}'
+          V='${{ needs.meta.outputs.version }}'
+          mkdir -p "dist/$GAME"
+          cp "target/x86_64-pc-windows-gnu/release/$GAME.exe" "dist/$GAME/"
+          cp -r assets "dist/$GAME/"
+          (cd dist && zip -r "../$GAME-windows-x86_64-v$V.zip" "$GAME")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: "*.zip"
+
+  android:
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - name: Install NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;26.1.10909125" "platforms;android-33" "build-tools;34.0.0"
+      - name: Cache cargo-apk
+        id: cache-cargo-apk
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-apk
+          key: cargo-apk-${{ runner.os }}
+      - name: Install cargo-apk
+        if: steps.cache-cargo-apk.outputs.cache-hit != 'true'
+        run: cargo install cargo-apk
+      - name: Generate signing keystore
+        # CI signs with a freshly generated debug keystore. The keystore path
+        # in Cargo.toml points at the dev machine, so repoint it here.
+        run: |
+          mkdir -p "$HOME/.android"
+          keytool -genkey -v -keystore "$HOME/.android/debug.keystore" \
+            -storepass android -alias androiddebugkey -keypass android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+          sed -i "s|^path = \".*debug.keystore\"|path = \"$HOME/.android/debug.keystore\"|" Cargo.toml
+      - name: Build APKs
+        run: |
+          export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/26.1.10909125"
+          GAME='${{ needs.meta.outputs.game }}'
+          V='${{ needs.meta.outputs.version }}'
+          cargo apk build --release --lib --target aarch64-linux-android
+          mv "target/release/apk/$GAME.apk" "$GAME-android-arm64-v$V.apk"
+          cargo apk build --release --lib --target x86_64-linux-android
+          mv "target/release/apk/$GAME.apk" "$GAME-android-x86_64-v$V.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: "*.apk"
+
+  release:
+    needs: [meta, linux, windows, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.meta.outputs.version }}
+          name: ${{ needs.meta.outputs.game }} v${{ needs.meta.outputs.version }}
+          files: |
+            *.tar.gz
+            *.zip
+            *.apk
