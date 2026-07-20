@@ -35,6 +35,14 @@ const PLAYER_RADIUS: f32 = 0.5;
 const MOVE_SPEED: f32 = 6.0;
 const GROUND_HALF_EXTENT: f32 = 24.0;
 
+const PILLARS: [(f32, f32); 5] = [(6.0, 6.0), (-6.0, 6.0), (6.0, -6.0), (-6.0, -6.0), (0.0, 10.0)];
+const PILLAR_HALF: f32 = 0.3;
+const PILLAR_TOP: f32 = 2.0;
+
+/// Knock sound played when the sphere bumps into a pillar or arena wall.
+#[derive(Resource)]
+struct CollisionSound(Handle<AudioSource>);
+
 pub fn run_game() {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.04, 0.05, 0.09)))
@@ -56,16 +64,19 @@ pub fn run_game() {
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (move_player, control_camera, sync_camera.after(control_camera).after(move_player)),
+            (move_player, collide_player, control_camera, sync_camera).chain(),
         )
         .run();
 }
 
 fn setup(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    commands.insert_resource(CollisionSound(asset_server.load("bounce.wav")));
+
     // Ground
     commands.spawn((
         Mesh3d(meshes.add(Plane3d::default().mesh().size(GROUND_HALF_EXTENT * 2.0, GROUND_HALF_EXTENT * 2.0))),
@@ -95,7 +106,7 @@ fn setup(
         base_color: Color::srgb(0.35, 0.4, 0.55),
         ..default()
     });
-    for (x, z) in [(6.0, 6.0), (-6.0, 6.0), (6.0, -6.0), (-6.0, -6.0), (0.0, 10.0)] {
+    for (x, z) in PILLARS {
         commands.spawn((
             Mesh3d(pillar_mesh.clone()),
             MeshMaterial3d(pillar_mat.clone()),
@@ -195,6 +206,58 @@ fn move_player(
         let angle = horizontal_delta.length() / PLAYER_RADIUS;
         transform.rotate(Quat::from_axis_angle(axis, angle));
     }
+}
+
+/// Keeps the sphere out of the pillars and plays a knock on new contact
+/// with a pillar or an arena wall.
+fn collide_player(
+    mut commands: Commands,
+    sound: Res<CollisionSound>,
+    mut player: Query<&mut Transform, With<Player>>,
+    mut was_hit: Local<bool>,
+) {
+    let Ok(mut transform) = player.get_single_mut() else {
+        return;
+    };
+    let mut hit = false;
+
+    // Pillars: circle vs square in the XZ plane, only below the pillar top.
+    if transform.translation.y - PLAYER_RADIUS < PILLAR_TOP {
+        for (px, pz) in PILLARS {
+            let closest = Vec3::new(
+                transform.translation.x.clamp(px - PILLAR_HALF, px + PILLAR_HALF),
+                transform.translation.y,
+                transform.translation.z.clamp(pz - PILLAR_HALF, pz + PILLAR_HALF),
+            );
+            let mut delta = transform.translation - closest;
+            delta.y = 0.0;
+            let dist = delta.length();
+            if dist < PLAYER_RADIUS {
+                let push = if dist > 1e-4 { delta / dist } else { Vec3::X };
+                transform.translation += push * (PLAYER_RADIUS - dist);
+                hit = true;
+            }
+        }
+    }
+
+    // Arena walls (move_player clamps position to these bounds).
+    hit |= transform.translation.x.abs() >= GROUND_HALF_EXTENT - 1e-3
+        || transform.translation.z.abs() >= GROUND_HALF_EXTENT - 1e-3;
+
+    // Only knock on the rising edge, with position-derived pitch variation
+    // so repeated bumps don't sound canned.
+    if hit && !*was_hit {
+        let variation =
+            0.9 + ((transform.translation.x + transform.translation.z).abs() % 1.0) * 0.25;
+        commands.spawn((
+            AudioPlayer::new(sound.0.clone()),
+            PlaybackSettings {
+                speed: variation,
+                ..PlaybackSettings::DESPAWN
+            },
+        ));
+    }
+    *was_hit = hit;
 }
 
 /// Mouse drag orbits the camera, scroll wheel zooms. A one-finger touch

@@ -11,6 +11,8 @@ The base game is a sphere you drive around a 3D plane:
 - **Mouse drag** — orbit the camera (one-finger drag on Android)
 - **Scroll wheel** — zoom
 
+The pillars and arena walls are solid: bumping into them nudges the sphere out and plays a knock sound (`assets/bounce.wav`, pitch-varied per hit) — a tiny demo of collision response plus the audio pipeline working on every platform.
+
 ---
 
 ## How the multi-platform methodology works
@@ -41,6 +43,7 @@ Key load-bearing details (easy to lose, hard to rediscover):
 - Emulator GPU emulation matters for wgpu/Vulkan: `swangle_indirect` (run_emulator.sh) is the most stable; `start_new_emulator.sh` is the SwiftShader/CPU fallback for hosts whose GPU driver crashes the emulator.
 - `game.env` centralizes the game identity + Android SDK paths; every script sources it.
 - Browser build details: `bevy_embedded_assets` means the `.wasm` is fully self-contained (no asset fetch issues on static hosts); `wasm-bindgen-cli` must exactly match the `wasm-bindgen` crate version in `Cargo.lock` (`build_web.sh` auto-installs the right one); `getrandom` 0.3 (pulled via ahash/bevy) needs the `wasm_js` feature **and** `RUSTFLAGS=--cfg getrandom_backend="wasm_js"` — both are wired in already; the window is bound to the `#game-canvas` element in `web/index.html`.
+- Browser build size: the web build uses the dedicated `[profile.wasm-release]` (opt-level `z`, fat LTO — native platforms keep the fast default release profile) and then `wasm-opt -Oz` from binaryen if installed. Expect roughly half the size of a plain release wasm.
 
 ## Scripts
 

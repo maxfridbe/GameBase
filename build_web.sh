@@ -10,10 +10,10 @@ set -e
 echo "=== Preparing WASM Build Environment ==="
 rustup target add wasm32-unknown-unknown
 
-echo "=== Building for wasm32-unknown-unknown (Release) ==="
+echo "=== Building for wasm32-unknown-unknown (wasm-release profile) ==="
 # getrandom needs to be told to use the browser's crypto API (see Cargo.toml)
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg getrandom_backend=\"wasm_js\""
-cargo build --release --target wasm32-unknown-unknown
+cargo build --profile wasm-release --target wasm32-unknown-unknown
 
 # wasm-bindgen-cli MUST match the wasm-bindgen crate version in Cargo.lock.
 WBV=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | grep '^version' | cut -d'"' -f2)
@@ -29,7 +29,17 @@ mkdir -p "$DIST_DIR"
 
 wasm-bindgen --no-typescript --target web \
     --out-dir "$DIST_DIR" --out-name "$GAME_NAME" \
-    "target/wasm32-unknown-unknown/release/$GAME_NAME.wasm"
+    "target/wasm32-unknown-unknown/wasm-release/$GAME_NAME.wasm"
+
+# Shrink further with binaryen's wasm-opt if available (~30-50% smaller)
+WASM="$DIST_DIR/${GAME_NAME}_bg.wasm"
+if command -v wasm-opt &>/dev/null; then
+    BEFORE=$(ls -lh "$WASM" | awk '{print $5}')
+    echo "Running wasm-opt -Oz ($BEFORE before)..."
+    wasm-opt -Oz --output "$WASM.opt" "$WASM" && mv "$WASM.opt" "$WASM"
+else
+    echo "NOTE: wasm-opt not found (apt/dnf: binaryen) - skipping extra shrink"
+fi
 
 sed "s/{{GAME_NAME}}/$GAME_NAME/g" web/index.html > "$DIST_DIR/index.html"
 

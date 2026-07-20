@@ -1,6 +1,6 @@
 [package]
 name = "game_base"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
@@ -61,6 +61,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [[bin]]
 name = "game_base"
 path = "src/main.rs"
+
+# Size-optimized profile used ONLY by the browser build (build_web.sh / CI
+# web job). Native platforms keep the default speed-optimized release.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
 
 # --- cargo-apk configuration (primary Android path) ---
 [package.metadata.android]

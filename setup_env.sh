@@ -68,6 +68,7 @@ else
     bad "rust target wasm32-unknown-unknown"
 fi
 have wasm-bindgen && ok "wasm-bindgen-cli" || bad "wasm-bindgen-cli (build_web.sh auto-installs the version matching Cargo.lock)"
+have wasm-opt && ok "wasm-opt (binaryen)" || bad "wasm-opt  (apt/dnf: binaryen — optional, shrinks the .wasm ~30-50%)"
 
 echo "=== 5. Android APK builds (build_cargo_apk*.sh / buildanddeploy.sh) ==="
 for t in aarch64-linux-android x86_64-linux-android; do
@@ -111,13 +112,15 @@ if [ "$PM" == "apt" ]; then
         build-essential pkg-config cmake curl wget unzip \
         libx11-dev libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
         openjdk-21-jdk-headless \
-        gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+        gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 \
+        binaryen
 elif [ "$PM" == "dnf" ]; then
     sudo dnf install -y \
         gcc gcc-c++ pkg-config cmake curl wget unzip \
         libX11-devel alsa-lib-devel systemd-devel wayland-devel libxkbcommon-devel \
         java-21-openjdk-headless \
-        mingw64-gcc mingw64-gcc-c++
+        mingw64-gcc mingw64-gcc-c++ \
+        binaryen
 else
     echo "No supported package manager (apt/dnf) found - install system packages manually."
 fi
