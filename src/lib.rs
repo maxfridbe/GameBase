@@ -1,6 +1,6 @@
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
-use bevy_embedded_assets::EmbeddedAssetPlugin;
+use bevy_embedded_assets::{EmbeddedAssetPlugin, PluginMode};
 
 /// Android entry point. cargo-apk builds the cdylib and NativeActivity
 /// calls into this via the #[bevy_main] generated android_main.
@@ -48,7 +48,12 @@ pub fn run_game() {
         .insert_resource(ClearColor(Color::srgb(0.04, 0.05, 0.09)))
         // EmbeddedAssetPlugin must be added BEFORE DefaultPlugins so the
         // embedded asset source is registered before the AssetServer starts.
-        .add_plugins(EmbeddedAssetPlugin::default())
+        // ReplaceDefault makes plain load("bounce.wav") paths resolve to the
+        // embedded copies; the AutoLoad default only serves embedded:// URLs,
+        // so on the web assets would be fetched over HTTP and 404.
+        .add_plugins(EmbeddedAssetPlugin {
+            mode: PluginMode::ReplaceDefault,
+        })
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Game Base".into(),

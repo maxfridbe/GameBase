@@ -92,7 +92,9 @@ jobs:
       - name: Build
         env:
           RUSTFLAGS: --cfg getrandom_backend="wasm_js"
-        run: cargo build --profile wasm-release --target wasm32-unknown-unknown
+        # --bin: without it the bin and cdylib lib targets both emit
+        # $GAME.wasm into the same directory and whichever links last wins.
+        run: cargo build --profile wasm-release --target wasm32-unknown-unknown --bin '${{ needs.meta.outputs.game }}'
       - name: Install wasm-bindgen-cli (prebuilt, version-matched to Cargo.lock)
         run: |
           WBV=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | grep '^version' | cut -d'"' -f2)
@@ -102,7 +104,13 @@ jobs:
           wasm-bindgen --version
       - name: Package
         run: |
-          sudo apt-get update && sudo apt-get install -y binaryen
+          # Pinned binaryen release: Ubuntu's apt package (v108) corrupts the
+          # wasm-bindgen externref table export, which kills the game at
+          # startup with "WebAssembly.Table.grow(): failed to grow table".
+          BINARYEN=version_131
+          curl -sL "https://github.com/WebAssembly/binaryen/releases/download/$BINARYEN/binaryen-$BINARYEN-x86_64-linux.tar.gz" | tar xz
+          sudo mv "binaryen-$BINARYEN/bin/wasm-opt" /usr/local/bin/
+          wasm-opt --version
           GAME='${{ needs.meta.outputs.game }}'
           V='${{ needs.meta.outputs.version }}'
           mkdir -p dist
