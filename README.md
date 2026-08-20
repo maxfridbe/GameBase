@@ -60,7 +60,7 @@ Key load-bearing details (easy to lose, hard to rediscover):
 
 The first run compiles osxcross and is slow (**~15–20 minutes, several GB of image**). After that the image is cached and a build is just `cargo build` + packaging. Crates are cached in a podman volume (`gamebase-macos-cargo-registry`) across runs.
 
-In CI the `macos` job runs the exact same image. Building it on every push would be wasteful, so the job pushes it to this repo's container registry (`ghcr.io/<owner>/<repo>/macos-builder:<sdk-version>`, private by default) and pulls it on later runs. Measured on the first run: **18m30s total** — 12m building and pushing the image, 6m for the cargo build. Once the image is cached the job should be roughly the 6m half. A fork whose token cannot push to GHCR just rebuilds the image each time and logs a warning; the build still succeeds.
+In CI the `macos` job runs the exact same image. Building it on every push would be wasteful, so the job pushes it to this repo's container registry (`ghcr.io/<owner>/<repo>/macos-builder:<sdk-version>`, private by default) and pulls it on later runs. Measured: the first run took **18m30s** (12m building and pushing the image, 6m for the cargo build); the next run, pulling the cached image, took **6m49s** — the pull step itself dropped to 41s. A fork whose token cannot push to GHCR just rebuilds the image each time and logs a warning; the build still succeeds.
 
 Things worth knowing before you ship the `.dmg`:
 
