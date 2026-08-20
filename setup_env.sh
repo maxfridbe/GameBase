@@ -7,6 +7,7 @@
 # Covers the requirements of:
 #   run_linux.sh          (native toolchain + Bevy system libs)
 #   build_windows.sh      (MinGW-w64 cross compiler + rust windows target)
+#   build_macos.sh        (podman only - the cross toolchain is containerized)
 #   build_cargo_apk*.sh   (cargo-apk, Android rust targets, SDK/NDK, keystore)
 #   buildanddeploy.sh     (cargo-ndk, Java for Gradle, NDK libc++_shared.so)
 #   deploy_*/run_emulator (adb, emulator)
@@ -61,7 +62,12 @@ else
     bad "rust target x86_64-pc-windows-gnu"
 fi
 
-echo "=== 4. Browser/WASM build (build_web.sh) ==="
+echo "=== 4. macOS arm64 cross build (build_macos.sh) ==="
+# The whole toolchain lives in a container, so podman (or docker) is the only
+# host requirement - nothing to install natively.
+have podman && ok "podman" || { have docker && ok "docker (podman preferred)" || bad "podman  (apt: podman / dnf: podman) - needed by build_macos.sh"; }
+
+echo "=== 5. Browser/WASM build (build_web.sh) ==="
 if have rustup && rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then
     ok "rust target wasm32-unknown-unknown"
 else
@@ -70,7 +76,7 @@ fi
 have wasm-bindgen && ok "wasm-bindgen-cli" || bad "wasm-bindgen-cli (build_web.sh auto-installs the version matching Cargo.lock)"
 have wasm-opt && ok "wasm-opt (binaryen)" || bad "wasm-opt  (apt/dnf: binaryen — optional, shrinks the .wasm ~30-50%)"
 
-echo "=== 5. Android APK builds (build_cargo_apk*.sh / buildanddeploy.sh) ==="
+echo "=== 6. Android APK builds (build_cargo_apk*.sh / buildanddeploy.sh) ==="
 for t in aarch64-linux-android x86_64-linux-android; do
     if have rustup && rustup target list --installed 2>/dev/null | grep -q "$t"; then
         ok "rust target $t"
@@ -113,6 +119,7 @@ if [ "$PM" == "apt" ]; then
         libx11-dev libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
         openjdk-21-jdk-headless \
         gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 \
+        podman \
         binaryen
 elif [ "$PM" == "dnf" ]; then
     sudo dnf install -y \
@@ -120,6 +127,7 @@ elif [ "$PM" == "dnf" ]; then
         libX11-devel alsa-lib-devel systemd-devel wayland-devel libxkbcommon-devel \
         java-21-openjdk-headless \
         mingw64-gcc mingw64-gcc-c++ \
+        podman \
         binaryen
 else
     echo "No supported package manager (apt/dnf) found - install system packages manually."

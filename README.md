@@ -1,6 +1,6 @@
 # GameBase
 
-A minimal Bevy (Rust) starter game that already ships to **Linux**, **Windows**, **Android (APK)**, and the **browser (WASM)** from a single Linux dev machine. The build methodology was extracted from the Julian2 train game project.
+A minimal Bevy (Rust) starter game that already ships to **Linux**, **Windows**, **macOS (Apple Silicon)**, **Android (APK)**, and the **browser (WASM)** from a single Linux dev machine. The build methodology was extracted from the Julian2 train game project.
 
 **[▶ Play the demo in your browser](https://maxfridbe.github.io/GameBase/)** — deployed automatically to GitHub Pages by the release workflow.
 
@@ -30,6 +30,7 @@ src/main.rs  -> tiny desktop wrapper: fn main() { game_base::run_game() }
 |----------|-----------|----------------|
 | Linux | native `cargo run` (x11 feature) | `target/release/game_base` |
 | Windows | cross-compile from Linux with MinGW (`x86_64-pc-windows-gnu`) | `target/windows_dist/` (exe + assets, zip and ship) |
+| macOS (arm64) | cross-compile from Linux in a podman container: osxcross + Apple SDK → `.app` bundle → `.dmg` | `target/macos_dist/` (`<Game>.app` + `<game>-macos-arm64-v<version>.dmg`) |
 | Android A (**primary**) | `cargo apk` builds the **cdylib** into an APK per ABI; NativeActivity, no Java code at all | `target/{debug,release}/apk/*.apk` |
 | Android B (alternative) | `cargo ndk` drops the cdylib into `app/src/main/jniLibs/`, then Gradle wraps it with a Java `GameActivity` into one universal APK | `app/build/outputs/apk/debug/app-debug.apk` |
 | Browser (WASM) | compile the bin to `wasm32-unknown-unknown` (webgl2 feature), `wasm-bindgen` generates the JS glue, `web/index.html` hosts the canvas | `target/web_dist/` (static site — serve anywhere) |
@@ -41,18 +42,42 @@ Key load-bearing details (easy to lose, hard to rediscover):
 - Bevy is built with `default-features = false`; the `android-native-activity` feature is what Path A needs, `x11` is what native Linux needs. If you use **Path B (Gradle/GameActivity)**, switch the bevy feature `android-native-activity` → `android-game-activity` so it matches the Java `GameActivity` wrapper (Path A was the proven/primary path in the source project).
 - Two APKs are built on purpose in Path A: **x86_64** for the desktop emulator, **arm64-v8a** for real phones. Path B builds one fat APK containing both.
 - Emulator GPU emulation matters for wgpu/Vulkan: `swangle_indirect` (run_emulator.sh) is the most stable; `start_new_emulator.sh` is the SwiftShader/CPU fallback for hosts whose GPU driver crashes the emulator.
+- **macOS is built in a container, not on a Mac.** `build_macos.sh` → `Containerfile.macos` → osxcross + Apple's SDK. Two details are load-bearing: Apple Silicon **refuses to exec an arm64 binary with no code signature at all**, so the build ad-hoc signs the bundle with `rcodesign` (this is not the same as Developer ID signing); and `bindgen` (pulled in by `coreaudio-sys` → `cpal` → `bevy_audio`) ignores `CC_*` and needs the sysroot passed via `BINDGEN_EXTRA_CLANG_ARGS_*`, which the image bakes in. See [macOS notes](#macos-apple-silicon-notes).
 - `game.env` centralizes the game identity + Android SDK paths; every script sources it.
 - Browser build details: `bevy_embedded_assets` means the `.wasm` is fully self-contained (no asset fetch issues on static hosts); `wasm-bindgen-cli` must exactly match the `wasm-bindgen` crate version in `Cargo.lock` (`build_web.sh` auto-installs the right one); `getrandom` 0.3 (pulled via ahash/bevy) needs the `wasm_js` feature **and** `RUSTFLAGS=--cfg getrandom_backend="wasm_js"` — both are wired in already; the window is bound to the `#game-canvas` element in `web/index.html`.
 - Browser build size: the web build uses the dedicated `[profile.wasm-release]` (opt-level `z`, fat LTO — native platforms keep the fast default release profile) and then `wasm-opt -Oz` from binaryen if installed. Expect roughly half the size of a plain release wasm.
+
+## macOS (Apple Silicon) notes
+
+`./build_macos.sh` builds `target/macos_dist/<Game>.app` and a matching `.dmg` without a Mac anywhere in the loop. Everything happens inside the image defined by `Containerfile.macos`:
+
+| Piece | Source | Why |
+|-------|--------|-----|
+| [osxcross](https://github.com/tpoechtrager/osxcross) | pinned commit, built from source | clang/cctools/ld64 wrappers that target Apple's SDK |
+| macOS SDK 14.5 | [`joseluisq/macosx-sdks`](https://github.com/joseluisq/macosx-sdks/releases) (public mirror), sha256-pinned | headers + framework stubs for AppKit/Metal/CoreAudio |
+| [`rcodesign`](https://github.com/indygreg/apple-platform-rs) | prebuilt release, sha256-verified | ad-hoc code signing from Linux |
+| `xorriso` | Ubuntu package | writes the `.dmg` disk image |
+
+The first run compiles osxcross and is slow (**~15–20 minutes, several GB of image**). After that the image is cached and a build is just `cargo build` + packaging. Crates are cached in a podman volume (`gamebase-macos-cargo-registry`) across runs.
+
+Things worth knowing before you ship the `.dmg`:
+
+- **Ad-hoc signing is mandatory, not cosmetic.** arm64 macOS will not execute a binary with no signature at all, so `build_macos_bundle.sh` always runs `rcodesign sign`. That is *not* Developer ID signing.
+- **Gatekeeper will still block it**, because the app is neither Developer-ID-signed nor notarized — those steps need a paid Apple Developer account and Apple's notary service. Your users open it once via **right-click → Open**, or you run `xattr -dr com.apple.quarantine "/Applications/Game Base.app"`. To do it properly, sign and notarize with your own certificate (`rcodesign` can do both from Linux).
+- **The `.dmg` is an ISO9660+Rock Ridge image**, which macOS mounts as a read-only disk with the usual drag-to-`/Applications` layout. A compressed UDBZ/HFS+ image needs Apple's `hdiutil` (or a from-source `libdmg-hfsplus`); if you want one, run `hdiutil convert in.dmg -format UDBZ -o out.dmg` on any Mac.
+- **Intel Macs are not covered.** The same image can build `x86_64-apple-darwin` — swap the target in `build_macos_bundle.sh` and `lipo` the two binaries into a universal one — but the default output is arm64-only.
+- **Licensing:** the macOS SDK is Apple's property and its licence only permits use on Apple-branded hardware. The mirror is publicly reachable; that is not the same as a licence. Decide for yourself whether this route fits your situation, and don't redistribute the built image.
+- **App icon:** `png2icns` builds `AppIcon.icns` from `assets/macos-icon.png` if you add one (1024x1024 works best). Without it the build falls back to the 48x48 Android launcher icon, or ships with no icon at all.
 
 ## Scripts
 
 | Script | What it does |
 |--------|--------------|
 | `setup_env.sh --check` | Verify every requirement of every build script (no sudo, no installs) — prints `[ OK ]`/`[MISS]` per item |
-| `setup_env.sh` | Check, then install only what's missing: system packages (apt or dnf detected automatically), Rust + cross targets, MinGW-w64, cargo-apk/cargo-ndk, Android SDK/NDK 26, debug keystore |
+| `setup_env.sh` | Check, then install only what's missing: system packages (apt or dnf detected automatically), Rust + cross targets, MinGW-w64, podman, cargo-apk/cargo-ndk, Android SDK/NDK 26, debug keystore |
 | `run_linux.sh [debug]` | Build + run natively on Linux |
 | `build_windows.sh` | Cross-compile Windows release, package exe + assets into `target/windows_dist/` |
+| `build_macos.sh` | Cross-compile the macOS arm64 `.app` + `.dmg` in a podman container into `target/macos_dist/` (`--rebuild` to refresh the toolchain image, `--shell` to poke around inside it) |
 | `build_web.sh` | Build the browser version into `target/web_dist/` (compile to wasm, run wasm-bindgen, add `web/index.html`) |
 | `build_cargo_apk.sh` / `_debug.sh` | Path A: build emulator (x86_64) + phone (ARM64) APKs |
 | `deploy_cargo_apk.sh` | Install Path A APK to running emulator, launch, follow logcat |
@@ -71,9 +96,10 @@ Key load-bearing details (easy to lose, hard to rediscover):
 
 1. `./increment_version.sh` (or `minor` / `major`) bumps it and syncs `Cargo.toml` + Gradle `versionName`/`versionCode`.
 2. Commit and push to `main`.
-3. `.github/workflows/release.yml` builds all three platforms on GitHub Actions and publishes a **GitHub Release tagged `v<version>`** with:
+3. `.github/workflows/release.yml` builds every platform on GitHub Actions and publishes a **GitHub Release tagged `v<version>`** with:
    - `<game>-linux-x86_64-v<version>.tar.gz` (binary + assets)
    - `<game>-windows-x86_64-v<version>.zip` (exe + assets, MinGW cross-compiled)
+   - `<game>-macos-arm64-v<version>.dmg` (Apple Silicon `.app` in a disk image)
    - `<game>-android-arm64-v<version>.apk` (phones) and `<game>-android-x86_64-v<version>.apk` (emulator)
    - `<game>-web-v<version>.zip` (static site) — the same build is also deployed to **GitHub Pages** as the live demo (first run: if the `pages` job fails, enable Pages once under repo Settings → Pages → Source: GitHub Actions)
 
@@ -86,6 +112,7 @@ Pushing again without bumping the version updates the existing release for that 
 ./setup_env.sh          # once per machine; installs only the missing pieces (apt or dnf)
 ./run_linux.sh          # play on Linux
 ./build_windows.sh      # produce target/windows_dist/ for Windows
+./build_macos.sh        # produce target/macos_dist/ for Apple Silicon (podman; slow first run)
 ./build_web.sh          # produce target/web_dist/ for the browser
 python3 -m http.server -d target/web_dist 8080   # ...then play at localhost:8080
 ./run_emulator.sh       # boot the Android emulator...
@@ -119,11 +146,13 @@ Also update `src/main.rs` (`my_game::run_game();`) and the window title in `src/
 
 ```bash
 GAME_NAME="my_game"                    # = Cargo.toml lib/bin name
+GAME_LABEL="My Game"                   # = [package.metadata.android] label; macOS .app / .dmg name
+MACOS_BUNDLE_ID="com.yourstudio.mygame"   # macOS bundle identifier
 ANDROID_PACKAGE="com.yourstudio.mygame"   # = [package.metadata.android] package
 GRADLE_PACKAGE="org.yourstudio.my_game"   # = app/build.gradle applicationId
 ```
 
-**3. App icon** — replace `assets/android-res/mipmap-mdpi/ic_launcher.png` (used by both Android paths).
+**3. App icon** — replace `assets/android-res/mipmap-mdpi/ic_launcher.png` (used by both Android paths). Optionally add `assets/macos-icon.png` at 1024x1024 for the macOS `.app` icon.
 
 **3b. Demo link** — the browser demo deploys to `https://<your-user>.github.io/<your-repo>/`; update the link at the top of this README. (`web/index.html` needs no changes — `build_web.sh` fills in the game name.)
 
@@ -141,7 +170,7 @@ GRADLE_PACKAGE="org.yourstudio.my_game"   # = app/build.gradle applicationId
 NEW=my_game; NEWPKG=com.yourstudio.mygame; NEWLABEL="My Game"
 sed -i "s/game_base/$NEW/g" Cargo.toml src/main.rs game.env
 sed -i "s/com\.gamebase\.game/$NEWPKG/g" Cargo.toml game.env
-sed -i "s/Game Base/$NEWLABEL/g" Cargo.toml src/lib.rs
+sed -i "s/Game Base/$NEWLABEL/g" Cargo.toml src/lib.rs game.env
 ```
 
 **5. Grow the game** — everything lives in `src/lib.rs`. The pattern that scales (used by the parent project): split features into modules, each exposing a Bevy `Plugin`, and `add_plugins(...)` them in `run_game()`. Put new assets in `assets/` — they are embedded automatically on every platform.
@@ -155,5 +184,8 @@ sed -i "s/Game Base/$NEWLABEL/g" Cargo.toml src/lib.rs
 | Android NDK | 26.1.10909125 | referenced by every script + setup |
 | AGP / Gradle | 8.4.0 / 8.6 | Path B only |
 | games-activity | 4.4.0 | must stay compatible with bevy's `android-activity` crate |
+| macOS SDK | 14.5 | pinned by version **and** sha256 in `Containerfile.macos`; bump both together |
+| osxcross | pinned commit | its build script and wrapper naming change over time |
+| rcodesign (apple-codesign) | 0.29.0 | prebuilt binary, sha256-verified |
 | wasm-bindgen-cli | = `wasm-bindgen` in Cargo.lock | hard requirement; `build_web.sh`/CI resolve it automatically |
 | minSdk / target/compileSdk | 30 / 33 / 34 | Path B only; cargo-apk defaults handle Path A |

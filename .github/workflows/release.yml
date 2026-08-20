@@ -1,5 +1,6 @@
-# Builds Linux, Windows (MinGW cross-compile) and Android (cargo-apk)
-# release artifacts and publishes them as a GitHub Release tagged
+# Builds Linux, Windows (MinGW cross-compile), macOS arm64 (osxcross in a
+# podman container), Android (cargo-apk) and web (wasm) release artifacts and
+# publishes them as a GitHub Release tagged
 # v<version.txt>. Bump the version with ./increment_version.sh.
 name: Release Builds
 
@@ -225,8 +226,56 @@ jobs:
           name: android
           path: "*.apk"
 
+  # Cross-compiles for Apple Silicon inside the same podman image you get
+  # locally from ./build_macos.sh - no macOS runner needed. The image bakes in
+  # osxcross + Apple's SDK and takes ~15-20 min to build, so it is cached in
+  # this repo's GHCR registry and only rebuilt when the SDK version changes.
+  macos:
+    needs: meta
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      MACOS_SDK_VERSION: "14.5"
+      MACOS_CARGO_REGISTRY: .ci-cargo-registry
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure podman
+        run: command -v podman || { sudo apt-get update && sudo apt-get install -y podman; }
+      - name: Cache Rust artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            .ci-cargo-registry
+            target/aarch64-apple-darwin
+          key: macos-cross-${{ hashFiles('Cargo.lock') }}
+          restore-keys: macos-cross-
+      - name: Pull or build the cross-toolchain image
+        run: |
+          set -euo pipefail
+          LOCAL="gamebase-macos-builder:$MACOS_SDK_VERSION"
+          REMOTE="ghcr.io/${GITHUB_REPOSITORY,,}/macos-builder:$MACOS_SDK_VERSION"
+          echo '${{ secrets.GITHUB_TOKEN }}' | podman login ghcr.io -u '${{ github.actor }}' --password-stdin
+          if podman pull "$REMOTE"; then
+            podman tag "$REMOTE" "$LOCAL"
+          else
+            echo "No cached image - building it (this is the slow path)."
+            podman build -f Containerfile.macos -t "$LOCAL" \
+              --build-arg "MACOS_SDK_VERSION=$MACOS_SDK_VERSION" .
+            podman tag "$LOCAL" "$REMOTE"
+            # Forks and PRs from forks get a read-only token; not fatal.
+            podman push "$REMOTE" || echo "::warning::could not cache image in GHCR"
+          fi
+      - name: Build .app and .dmg
+        run: ./build_macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: target/macos_dist/*.dmg
+
   release:
-    needs: [meta, linux, windows, android, web]
+    needs: [meta, linux, windows, macos, android, web]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -240,3 +289,4 @@ jobs:
             *.tar.gz
             *.zip
             *.apk
+            *.dmg
